@@ -1,0 +1,6 @@
+flask==3.0.3
+kubernetes==34.1.0
+requests==2.32.3
+jsonpath-ng==1.6.1
+flask-httpauth==4.8.0
+pyyaml==6.0.2
