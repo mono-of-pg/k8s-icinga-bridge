@@ -125,8 +125,9 @@ def json_check(check):
     value = check.get('value')
     warn_th = check.get('warn_threshold')
     crit_th = check.get('crit_threshold')
+    headers = check.get('headers', {})
     
-    resp = requests.get(url, timeout=10)
+    resp = requests.get(url, headers=headers, timeout=10)
     if resp.status_code != 200:
         return {'status': 'CRITICAL', 'output': f'HTTP {resp.status_code} from {url}', 'perfdata': ''}
     
