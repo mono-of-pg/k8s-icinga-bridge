@@ -11,7 +11,6 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 import requests
 from jsonpath_ng import parse
-from jsonpath_ng.exceptions import JsonPathException
 
 app = Flask(__name__)
 auth = HTTPBasicAuth()
@@ -131,12 +130,16 @@ def json_check(check):
     if resp.status_code != 200:
         return {'status': 'CRITICAL', 'output': f'HTTP {resp.status_code} from {url}', 'perfdata': ''}
     
-    data = resp.json()
+    try:
+        data = resp.json()
+    except json.JSONDecodeError:
+        return {'status': 'CRITICAL', 'output': f'Invalid JSON from {url}', 'perfdata': ''}
+    
     try:
         jsonpath_expr = parse(path)
         match = [match.value for match in jsonpath_expr.find(data)]
-    except JsonPathException:
-        return {'status': 'CRITICAL', 'output': f'Invalid JSONPath {path}', 'perfdata': ''}
+    except Exception as e:
+        return {'status': 'CRITICAL', 'output': f'Invalid JSONPath {path}: {str(e)}', 'perfdata': ''}
     
     if not match:
         return {'status': 'CRITICAL', 'output': f'No match for path {path}', 'perfdata': ''}
