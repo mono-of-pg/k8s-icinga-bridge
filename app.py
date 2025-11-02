@@ -83,8 +83,12 @@ def deployment_check(check, ns):
         if ready < desired:
             failed.append(f'{dep.metadata.name}: {ready}/{desired}')
     
-    output = f'{"All" if not failed else len(failed)+"/"+str(total)} deployments healthy' if status == 'OK' else f'{ready_total}/{desired_total} replicas ready'
-    perfdata = f"'deployments_ready'={ready_total};;0 '{deployments_total}'={total};;0"
+    if status == 'OK':
+        output = f'All {total} deployments healthy'
+    else:
+        output = f'{len(failed)}/{total} deployments unhealthy: {" - ".join(failed)}'
+    
+    perfdata = f"'deployments_ready'={ready_total};;0 'deployments_count'={total};;0"
     
     return {'status': status, 'output': output, 'perfdata': perfdata}
 
@@ -106,7 +110,11 @@ def service_check(check, ns):
     crit_th = check.get('crit_threshold', 0)
     status = get_status_color(value, warn_th, crit_th)
     
-    output = f'All services available' if status == 'OK' else f'{value}/{total} services healthy'
+    if status == 'OK':
+        output = f'All {total} services available'
+    else:
+        output = f'{len(failed)}/{total} services unavailable: {" - ".join(failed)}'
+    
     perfdata = f"'services_healthy'={value};;0"
     
     return {'status': status, 'output': output, 'perfdata': perfdata}
@@ -136,25 +144,32 @@ def json_check(check):
     extracted = match[0] if len(match) == 1 and not isinstance(match[0], list) else match
     
     numeric_value = None
+    perfdata = ''
     if condition == 'eq':
         status = 'OK' if extracted == value else 'CRITICAL'
         output = f'Value matches {value}' if status == 'OK' else f'Expected {value}, got {extracted}'
-        perfdata = ''
     elif condition == 'contains':
         status = 'OK' if value in str(extracted) else 'CRITICAL'
         output = f'Contains {value}' if status == 'OK' else f'Missing {value} in {extracted}'
-        perfdata = ''
     elif condition == 'count':
-        count = len(extracted)
+        # For count, if value provided, count matches (e.g., containing value)
+        if value:
+            count = sum(1 for item in extracted if str(value) in str(item))
+        else:
+            count = len(extracted)
+        warn_str = str(warn_th) if warn_th is not None else ''
+        crit_str = str(crit_th) if crit_th is not None else ''
         status = get_status_color(count, warn_th, crit_th)
-        output = f'{count} items found' if status == 'OK' else f'{count} items (thresholds: warn={warn_th}, crit={crit_th})'
+        output = f'{count} items {"matching " + str(value) if value else "found"}' if status == 'OK' else f'{count} items (thresholds: warn={warn_str}, crit={crit_str})'
         numeric_value = count
-        perfdata = f"'json_count'={count};{warn_th or ""};{crit_th or ""}"
+        perfdata = f"'json_count'={count};{warn_str};{crit_str}"
     else:
         return {'status': 'CRITICAL', 'output': f'Unknown condition {condition}', 'perfdata': ''}
     
-    if numeric_value is not None:
-        perfdata = f"'json_value'={numeric_value};{warn_th or ""};{crit_th or ""}"
+    if numeric_value is not None and not perfdata:
+        warn_str = str(warn_th) if warn_th is not None else ''
+        crit_str = str(crit_th) if crit_th is not None else ''
+        perfdata = f"'json_value'={numeric_value};{warn_str};{crit_str}"
     
     return {'status': status, 'output': output, 'perfdata': perfdata}
 
@@ -162,6 +177,8 @@ def exec_check(check):
     command = check['command']
     expected_rc = check.get('expected_rc', {0: 'OK', 1: 'WARNING', 2: 'CRITICAL', 3: 'CRITICAL'})
     parse_expr = check.get('parse_output', '')  # JSONPath or regex like r'(\d+)'
+    warn_th = check.get('warn_threshold')
+    crit_th = check.get('crit_threshold')
     
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=30)
@@ -171,8 +188,10 @@ def exec_check(check):
         status_map = {0: 'OK', 1: 'WARNING', 2: 'CRITICAL', 3: 'CRITICAL'}
         status = status_map.get(rc, 'CRITICAL')
         
+        numeric_value = None
         perfdata = ''
         if parse_expr:
+            val = None
             if parse_expr.startswith('$.'):  # JSONPath
                 try:
                     data = json.loads(output)
@@ -180,20 +199,29 @@ def exec_check(check):
                     matches = [m.value for m in expr.find(data)]
                     if matches:
                         val = matches[0] if len(matches) == 1 else len(matches)
-                        perfdata = f"'exec_value'={val};;;0"
                 except:
                     pass
             else:  # Regex
                 match = re.search(parse_expr, output)
                 if match:
-                    val = match.group(1)
                     try:
-                        val = int(val)
-                        perfdata = f"'exec_value'={val};;;0"
+                        val = int(match.group(1))
                     except:
-                        pass
+                        val = match.group(1)
+            
+            if isinstance(val, (int, float)):
+                numeric_value = val
+                # Override status with thresholds if provided
+                if warn_th is not None or crit_th is not None:
+                    status = get_status_color(numeric_value, warn_th, crit_th)
+                warn_str = str(warn_th) if warn_th is not None else ''
+                crit_str = str(crit_th) if crit_th is not None else ''
+                perfdata = f"'exec_value'={numeric_value};{warn_str};{crit_str}"
+            else:
+                perfdata = f"'exec_value'={repr(val)};;;0"
         
-        return {'status': status, 'output': output[:100] + '...' if len(output) > 100 else output, 'perfdata': perfdata}
+        output = output[:100] + '...' if len(output) > 100 else output
+        return {'status': status, 'output': output, 'perfdata': perfdata}
     except Exception as e:
         return {'status': 'CRITICAL', 'output': f'Exec failed: {str(e)}', 'perfdata': ''}
 
@@ -202,7 +230,8 @@ def refresh_cache():
     while True:
         with CACHE_LOCK:
             for check in CONFIG:
-                if time.time() - (CACHE.get(check['name'], {}).get('timestamp', 0) or 0) > DEFAULT_REFRESH:
+                cached = CACHE.get(check['name'], {})
+                if time.time() - (cached.get('timestamp', 0) or 0) > DEFAULT_REFRESH:
                     result = run_check(check)
                     CACHE[check['name']] = {
                         'status': result['status'],
