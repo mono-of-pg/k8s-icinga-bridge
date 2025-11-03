@@ -142,6 +142,7 @@ def json_check(check):
     warn_th = check.get('warn_threshold')
     crit_th = check.get('crit_threshold')
     headers = check.get('headers', {})
+    metric_name = check.get('metric_name', 'json_value')
 
     # Ensure headers are a dictionary
     if isinstance(headers, list):
@@ -218,7 +219,7 @@ def json_check(check):
         status = get_status_color(count, warn_th, crit_th)
         output = f'{count} items {"matching " + str(value) if value else "found"}' if status == 'OK' else f'{count} items (thresholds: warn={warn_str}, crit={crit_str})'
         numeric_value = count
-        perfdata = f"'json_count'={count};{warn_str};{crit_str}"
+        perfdata = f"'{metric_name}'={count};{warn_str};{crit_str}"
     else:
         logging.error("Unknown condition %s", condition)
         return {'status': 'CRITICAL', 'output': f'Unknown condition {condition}', 'perfdata': ''}
@@ -226,7 +227,7 @@ def json_check(check):
     if numeric_value is not None and not perfdata:
         warn_str = str(warn_th) if warn_th is not None else ''
         crit_str = str(crit_th) if crit_th is not None else ''
-        perfdata = f"'json_value'={numeric_value};{warn_str};{crit_str}"
+        perfdata = f"'{metric_name}'={numeric_value};{warn_str};{crit_str}"
     
     logging.debug("JSON check result: %s", {'status': status, 'output': output, 'perfdata': perfdata})
     return {'status': status, 'output': output, 'perfdata': perfdata}
