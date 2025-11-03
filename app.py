@@ -5,12 +5,17 @@ import time
 import threading
 import subprocess
 import re
+import logging
 from flask import Flask, Response
 from flask_httpauth import HTTPBasicAuth
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 import requests
 from jsonpath_ng import parse
+
+# Configure logging
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
+logging.basicConfig(level=LOG_LEVEL, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
 auth = HTTPBasicAuth()
@@ -21,8 +26,13 @@ v1 = client.CoreV1Api()
 apps_v1 = client.AppsV1Api()
 
 # Load config from mounted volume
-with open('/config/config.yaml', 'r') as f:
-    CONFIG = yaml.safe_load(f)['checks']
+try:
+    with open('/config/config.yaml', 'r') as f:
+        CONFIG = yaml.safe_load(f)['checks']
+    logging.debug("Configuration loaded successfully: %s", CONFIG)
+except Exception as e:
+    logging.error("Failed to load configuration: %s", str(e))
+    raise
 
 # Global cache: {check_name: {'status': str, 'output': str, 'perfdata': str, 'timestamp': float}}
 CACHE = {}
@@ -50,18 +60,22 @@ def run_check(check):
     """Run a single check and return dict with status, output, perfdata."""
     check_name = check['name']
     ns = check.get('namespace', NAMESPACE)
+    logging.debug("Running check: %s in namespace %s", check_name, ns)
     try:
         if check['type'] == 'deployment':
-            return deployment_check(check, ns)
+            result = deployment_check(check, ns)
         elif check['type'] == 'service':
-            return service_check(check, ns)
+            result = service_check(check, ns)
         elif check['type'] == 'json':
-            return json_check(check)
+            result = json_check(check)
         elif check['type'] == 'exec':
-            return exec_check(check)
+            result = exec_check(check)
         else:
-            return {'status': 'CRITICAL', 'output': f'Unknown check type {check["type"]}', 'perfdata': ''}
+            result = {'status': 'CRITICAL', 'output': f'Unknown check type {check["type"]}', 'perfdata': ''}
+        logging.debug("Check %s completed with result: %s", check_name, result)
+        return result
     except Exception as e:
+        logging.error("Check %s failed: %s", check_name, str(e))
         return {'status': 'CRITICAL', 'output': f'Check failed: {str(e)}', 'perfdata': ''}
 
 def deployment_check(check, ns):
@@ -89,6 +103,7 @@ def deployment_check(check, ns):
     
     perfdata = f"'deployments_ready'={ready_total};;0 'deployments_count'={total};;0"
     
+    logging.debug("Deployment check result: %s", result)
     return {'status': status, 'output': output, 'perfdata': perfdata}
 
 def service_check(check, ns):
@@ -116,6 +131,7 @@ def service_check(check, ns):
     
     perfdata = f"'services_healthy'={value};;0"
     
+    logging.debug("Service check result: %s", result)
     return {'status': status, 'output': output, 'perfdata': perfdata}
 
 def json_check(check):
@@ -127,25 +143,34 @@ def json_check(check):
     crit_th = check.get('crit_threshold')
     headers = check.get('headers', {})
     
+    logging.debug("Making GET request to %s with headers %s", url, headers)
     resp = requests.get(url, headers=headers, timeout=10)
+    logging.debug("Received response from %s: %s", url, resp.status_code)
     if resp.status_code != 200:
+        logging.error("HTTP %s from %s", resp.status_code, url)
         return {'status': 'CRITICAL', 'output': f'HTTP {resp.status_code} from {url}', 'perfdata': ''}
     
     try:
         data = resp.json()
+        logging.debug("Parsed JSON data: %s", data)
     except json.JSONDecodeError:
+        logging.error("Invalid JSON from %s", url)
         return {'status': 'CRITICAL', 'output': f'Invalid JSON from {url}', 'perfdata': ''}
     
     try:
         jsonpath_expr = parse(path)
         match = [match.value for match in jsonpath_expr.find(data)]
+        logging.debug("JSONPath match: %s", match)
     except Exception as e:
+        logging.error("Invalid JSONPath %s: %s", path, str(e))
         return {'status': 'CRITICAL', 'output': f'Invalid JSONPath {path}: {str(e)}', 'perfdata': ''}
     
     if not match:
+        logging.error("No match for path %s", path)
         return {'status': 'CRITICAL', 'output': f'No match for path {path}', 'perfdata': ''}
     
     extracted = match[0] if len(match) == 1 and not isinstance(match[0], list) else match
+    logging.debug("Extracted value: %s", extracted)
     
     numeric_value = None
     perfdata = ''
@@ -168,6 +193,7 @@ def json_check(check):
         numeric_value = count
         perfdata = f"'json_count'={count};{warn_str};{crit_str}"
     else:
+        logging.error("Unknown condition %s", condition)
         return {'status': 'CRITICAL', 'output': f'Unknown condition {condition}', 'perfdata': ''}
     
     if numeric_value is not None and not perfdata:
@@ -175,6 +201,7 @@ def json_check(check):
         crit_str = str(crit_th) if crit_th is not None else ''
         perfdata = f"'json_value'={numeric_value};{warn_str};{crit_str}"
     
+    logging.debug("JSON check result: %s", {'status': status, 'output': output, 'perfdata': perfdata})
     return {'status': status, 'output': output, 'perfdata': perfdata}
 
 def exec_check(check):
@@ -184,10 +211,12 @@ def exec_check(check):
     warn_th = check.get('warn_threshold')
     crit_th = check.get('crit_threshold')
     
+    logging.debug("Executing command: %s", command)
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=30)
         rc = result.returncode
         output = result.stdout.strip() or result.stderr.strip() or f'Return code {rc}'
+        logging.debug("Command output: %s", output)
         
         status_map = {0: 'OK', 1: 'WARNING', 2: 'CRITICAL', 3: 'CRITICAL'}
         status = status_map.get(rc, 'CRITICAL')
@@ -225,8 +254,10 @@ def exec_check(check):
                 perfdata = f"'exec_value'={repr(val)};;;0"
         
         output = output[:100] + '...' if len(output) > 100 else output
+        logging.debug("Exec check result: %s", {'status': status, 'output': output, 'perfdata': perfdata})
         return {'status': status, 'output': output, 'perfdata': perfdata}
     except Exception as e:
+        logging.error("Exec failed: %s", str(e))
         return {'status': 'CRITICAL', 'output': f'Exec failed: {str(e)}', 'perfdata': ''}
 
 def refresh_cache():
@@ -236,6 +267,7 @@ def refresh_cache():
             for check in CONFIG:
                 cached = CACHE.get(check['name'], {})
                 if time.time() - (cached.get('timestamp', 0) or 0) > DEFAULT_REFRESH:
+                    logging.debug("Refreshing check: %s", check['name'])
                     result = run_check(check)
                     CACHE[check['name']] = {
                         'status': result['status'],
@@ -243,6 +275,7 @@ def refresh_cache():
                         'perfdata': result['perfdata'],
                         'timestamp': time.time()
                     }
+                    logging.debug("Refreshed check %s: %s", check['name'], result)
         time.sleep(DEFAULT_REFRESH)
 
 # Start background refresher
@@ -267,6 +300,7 @@ def perform_check(check_name):
         if time.time() - cached.get('timestamp', 0) > ttl:
             # Stale, refresh
             check = next(c for c in CONFIG if c['name'] == check_name)
+            logging.debug("Refreshing stale check: %s", check_name)
             result = run_check(check)
             cached = {
                 'status': result['status'],
@@ -275,13 +309,21 @@ def perform_check(check_name):
                 'timestamp': time.time()
             }
             CACHE[check_name] = cached
+            logging.debug("Refreshed stale check %s: %s", check_name, result)
         
         if not cached:
+            logging.warning("Check not found: %s", check_name)
             return Response('CRITICAL - Check not found', mimetype='text/plain')
         
         body = f"{cached['status']} - {cached['output']}"
         if cached['perfdata']:
             body += f" | {cached['perfdata']}"
+        
+        if cached['status'] == 'WARNING':
+            logging.warning("Check %s returned WARNING: %s", check_name, cached['output'])
+        elif cached['status'] == 'CRITICAL':
+            logging.critical("Check %s returned CRITICAL: %s", check_name, cached['output'])
+        
         return Response(body, mimetype='text/plain')
 
 if __name__ == '__main__':
