@@ -146,6 +146,13 @@ def json_check(check):
     logging.debug("Making GET request to %s with headers %s", url, headers)
     resp = requests.get(url, headers=headers, timeout=10)
     logging.debug("Received response from %s: %s", url, resp.status_code)
+    # Log the first and last 5 lines of the response content
+    response_lines = resp.text.split('\n')
+    first_5_lines = '\n'.join(response_lines[:5])
+    last_5_lines = '\n'.join(response_lines[-5:])
+    response_log = f"{first_5_lines}\n...skipped...\n{last_5_lines}"
+    logging.debug("Response content: %s", response_log)
+
     if resp.status_code != 200:
         logging.error("HTTP %s from %s", resp.status_code, url)
         return {'status': 'CRITICAL', 'output': f'HTTP {resp.status_code} from {url}', 'perfdata': ''}
