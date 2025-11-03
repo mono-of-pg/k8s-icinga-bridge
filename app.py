@@ -142,6 +142,14 @@ def json_check(check):
     warn_th = check.get('warn_threshold')
     crit_th = check.get('crit_threshold')
     headers = check.get('headers', {})
+
+    # Ensure headers are a dictionary
+    if isinstance(headers, list):
+        headers_dict = {}
+        for header in headers:
+            key, val = header.split(': ', 1)
+            headers_dict[key] = val
+        headers = headers_dict
     
     logging.debug("Making GET request to %s with headers %s", url, headers)
     resp = requests.get(url, headers=headers, timeout=10)
