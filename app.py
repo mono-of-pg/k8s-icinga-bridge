@@ -180,17 +180,25 @@ def json_check(check):
         logging.error("No match for path %s", path)
         return {'status': 'CRITICAL', 'output': f'No match for path {path}', 'perfdata': ''}
     
-    extracted = match[0] if len(match) == 1 and not isinstance(match[0], list) else match
+    extracted = match[0] if len(match) == 1 else match
     logging.debug("Extracted value: %s", extracted)
     
     numeric_value = None
     perfdata = ''
     if condition == 'eq':
-        status = 'OK' if extracted == value else 'CRITICAL'
-        output = f'Value matches {value}' if status == 'OK' else f'Expected {value}, got {extracted}'
+        if isinstance(extracted, list):
+            status = 'OK' if all(item == value for item in extracted) else 'CRITICAL'
+            output = f'All values match {value}' if status == 'OK' else f'Not all values match {value}, found {extracted}'
+        else:
+            status = 'OK' if extracted == value else 'CRITICAL'
+            output = f'Value matches {value}' if status == 'OK' else f'Expected {value}, got {extracted}'
     elif condition == 'contains':
-        status = 'OK' if value in str(extracted) else 'CRITICAL'
-        output = f'Contains {value}' if status == 'OK' else f'Missing {value} in {extracted}'
+        if isinstance(extracted, list):
+            status = 'OK' if any(value in str(item) for item in extracted) else 'CRITICAL'
+            output = f'Contains {value}' if status == 'OK' else f'Missing {value} in {extracted}'
+        else:
+            status = 'OK' if value in str(extracted) else 'CRITICAL'
+            output = f'Contains {value}' if status == 'OK' else f'Missing {value} in {extracted}'
     elif condition == 'count':
         # For count, if value provided, count matches (e.g., containing value)
         if value:
