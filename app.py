@@ -150,7 +150,11 @@ def json_check(check):
     response_lines = resp.text.split('\n')
     first_5_lines = '\n'.join(response_lines[:5])
     last_5_lines = '\n'.join(response_lines[-5:])
-    response_log = f"{first_5_lines}\n...skipped...\n{last_5_lines}"
+    
+    if len(response_lines) <= 5:
+        response_log = first_5_lines
+    else:
+        response_log = f"{first_5_lines}\n...skipped...\n{last_5_lines}"
     logging.debug("Response content: %s", response_log)
 
     if resp.status_code != 200:
