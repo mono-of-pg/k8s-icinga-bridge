@@ -1,16 +1,24 @@
 # Kubernetes-Nagios/Icinga Integration: Check API
 
-A lightweight, Kubernetes-native HTTP API for Nagios/Icinga monitoring — **no agents required**.  
+A lightweight, Kubernetes-native HTTP API for Nagios/Icinga monitoring - **no agents required**.  
 Run health checks directly against your K8s cluster using native APIs and return Nagios-compatible output.
 
-✅ **Nagios/Icinga Compatible**  
-✅ **In-cluster Deployment**  
+✅ **Nagios/Icinga Compatible**
+
+✅ **In-cluster Deployment**
+
 ✅ **Zero Dependencies**
+
 ✅ **Check Deployments & Services via k8s API**
+
 ✅ **Check your App in-Cluster with JSON parsing**
+
 ✅ **Check in-Cluster Apps with native Nagios Check-Plugins**
-✅ **Performance Data (perfdata)**  
+
+✅ **Performance Data (perfdata)**
+
 ✅ **HTTP Basic Auth**
+
 ✅ **Non-Blocking checks with cached results**
 
 ---
@@ -297,14 +305,14 @@ define service {
 ## 📈 Monitoring & Alerts
 
 - **Performance data** enables graphing in Grafana, PNP4Nagios, etc.
-- **Caching** reduces K8s API load — checks refresh every 30s by default
-- Logs to stdout — compatible with Kubernetes log collectors (Fluentd, Loki)
+- **Caching** reduces K8s API load - checks refresh every 30s by default
+- Logs to stdout - compatible with Kubernetes log collectors (Fluentd, Loki)
 
 ---
 
 ## 🌐 Keywords for Search Engines
 
-> ✅ **Optimized for discovery** — use these keywords when searching:
+> ✅ **Optimized for discovery** - use these keywords when searching:
 
 `nagios kubernetes monitoring`  
 `icinga k8s checks`  
